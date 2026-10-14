@@ -1,0 +1,7 @@
+admin.env
+.env
+__pycache__/
+*.py[cod]
+.venv/
+data/catalog.sqlite3-shm
+data/catalog.sqlite3-wal
