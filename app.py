@@ -1,7 +1,8 @@
-import os, json, hmac, hashlib, secrets, sqlite3, uuid, time
+import os, json, hmac, hashlib, secrets, sqlite3, uuid, time, re, threading
 from datetime import datetime, timezone
 from pathlib import Path
 from urllib.parse import parse_qsl
+from urllib.request import Request, urlopen
 from functools import wraps
 
 from flask import Flask, render_template, request, jsonify, session, abort, send_from_directory, Response
@@ -24,6 +25,7 @@ LEGACY_USERNAME = os.getenv('DOODA_ADMIN_USERNAME', 'admin').strip()[:64] or 'ad
 ADMIN_ID = os.getenv('DOODA_ADMIN_TELEGRAM_ID', '')
 EXTENSIONS = {'.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.webp': 'image/webp'}
 LOGIN_ATTEMPTS = {}
+ORDER_ATTEMPTS = {}
 
 
 def db():
@@ -59,8 +61,28 @@ def init_db():
           password_hash TEXT NOT NULL, must_change INTEGER NOT NULL DEFAULT 1,
           created_at TEXT NOT NULL, updated_at TEXT NOT NULL
         );
+        CREATE TABLE IF NOT EXISTS orders (
+          id INTEGER PRIMARY KEY, public_id TEXT UNIQUE NOT NULL, phone TEXT NOT NULL,
+          telegram_id TEXT DEFAULT '', telegram_username TEXT DEFAULT '', customer_name TEXT DEFAULT '',
+          status TEXT NOT NULL DEFAULT 'reserved', total INTEGER NOT NULL DEFAULT 0,
+          created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS order_items (
+          id INTEGER PRIMARY KEY, order_id INTEGER NOT NULL REFERENCES orders(id) ON DELETE CASCADE,
+          card_id INTEGER REFERENCES cards(id) ON DELETE SET NULL, product_name TEXT NOT NULL,
+          brand TEXT DEFAULT '', price INTEGER NOT NULL, quantity INTEGER NOT NULL, line_total INTEGER NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS customers (
+          id INTEGER PRIMARY KEY, phone TEXT UNIQUE NOT NULL, telegram_id TEXT DEFAULT '',
+          telegram_username TEXT DEFAULT '', customer_name TEXT DEFAULT '', first_order_at TEXT NOT NULL,
+          last_order_at TEXT NOT NULL, order_count INTEGER NOT NULL DEFAULT 0,
+          reserved_total INTEGER NOT NULL DEFAULT 0, completed_total INTEGER NOT NULL DEFAULT 0
+        );
         ''')
+        had_stock_quantity = 'stock_quantity' in [column[1] for column in conn.execute('PRAGMA table_info(cards)')]
         add_column(conn, 'cards', 'in_stock INTEGER NOT NULL DEFAULT 1')
+        add_column(conn, 'cards', "brand TEXT NOT NULL DEFAULT ''")
+        add_column(conn, 'cards', 'stock_quantity INTEGER NOT NULL DEFAULT 0')
         add_column(conn, 'cards', 'price INTEGER NOT NULL DEFAULT 0')
         add_column(conn, 'cards', 'old_price INTEGER NOT NULL DEFAULT 0')
         add_column(conn, 'cards', 'featured INTEGER NOT NULL DEFAULT 0')
@@ -69,22 +91,25 @@ def init_db():
         now = datetime.now(timezone.utc).isoformat()
         conn.execute("UPDATE cards SET created_at=? WHERE created_at=''", (now,))
         conn.execute("UPDATE cards SET updated_at=created_at WHERE updated_at=''", ())
+        if not had_stock_quantity:
+            conn.execute('UPDATE cards SET stock_quantity=CASE WHEN in_stock=1 THEN 1 ELSE 0 END')
+        conn.execute('UPDATE cards SET in_stock=CASE WHEN stock_quantity>0 THEN 1 ELSE 0 END')
         if LEGACY_PASSWORD_HASH and not conn.execute('SELECT 1 FROM admins').fetchone():
             conn.execute('INSERT INTO admins(username,password_hash,must_change,created_at,updated_at) VALUES(?,?,?,?,?)',
                          (LEGACY_USERNAME, LEGACY_PASSWORD_HASH, 0, now, now))
         if not conn.execute('SELECT 1 FROM categories').fetchone():
             conn.executemany('INSERT INTO categories(name,sort_order) VALUES (?,?)',
                              [('Коллекции', 0), ('Аксессуары', 1), ('Другое', 2)])
-            samples = [('Aurora', 'Коллекции', '✦', 'pink', 349000, 'NEW'),
-                       ('Orbit', 'Коллекции', '◈', 'blue', 279000, 'HIT'),
-                       ('Nova', 'Аксессуары', '✳', 'violet', 189000, ''),
-                       ('Pixel', 'Аксессуары', '▣', 'mint', 99000, '')]
-            for idx, (name, category, icon, accent, price, tag) in enumerate(samples):
+            samples = [('Aurora', 'Коллекции', 'DOODA', '✦', 'pink', 349000, 'NEW', 8),
+                       ('Orbit', 'Коллекции', 'DOODA', '◈', 'blue', 279000, 'HIT', 5),
+                       ('Nova', 'Аксессуары', 'NOVA LAB', '✳', 'violet', 189000, '', 12),
+                       ('Pixel', 'Аксессуары', 'PIXEL', '▣', 'mint', 99000, '', 7)]
+            for idx, (name, category, brand, icon, accent, price, tag, stock) in enumerate(samples):
                 cid = conn.execute('SELECT id FROM categories WHERE name=?', (category,)).fetchone()['id']
-                conn.execute('''INSERT INTO cards(category_id,name,description,icon,accent,price,tag,featured,
-                                created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?)''',
-                             (cid, name, 'Демонстрационная карточка каталога.', icon, accent, price, tag,
-                              1 if idx < 3 else 0, now, now))
+                conn.execute('''INSERT INTO cards(category_id,name,description,brand,icon,accent,price,tag,featured,
+                                stock_quantity,in_stock,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)''',
+                             (cid, name, 'Демонстрационная карточка каталога.', brand, icon, accent, price, tag,
+                              1 if idx < 3 else 0, stock, 1, now, now))
 
 
 init_db()
@@ -134,8 +159,9 @@ def integer(value, default=0, minimum=0, maximum=100_000_000):
 
 def as_card(row, photos):
     return dict(id=row['id'], name=row['name'], category=row['category'], description=row['description'],
-                icon=row['icon'], accent=row['accent'], tag=row['tag'], published=bool(row['published']),
-                in_stock=bool(row['in_stock']), featured=bool(row['featured']), price=row['price'],
+                brand=row['brand'], icon=row['icon'], accent=row['accent'], tag=row['tag'], published=bool(row['published']),
+                in_stock=row['stock_quantity'] > 0, stock_quantity=row['stock_quantity'],
+                featured=bool(row['featured']), price=row['price'],
                 old_price=row['old_price'], images=photos, updated_at=row['updated_at'])
 
 
@@ -149,6 +175,60 @@ def all_cards(published_only=True):
         rows = conn.execute(query).fetchall()
         return [as_card(row, ['/media/' + image['filename'] for image in conn.execute(
             'SELECT filename FROM images WHERE card_id=? ORDER BY id', (row['id'],))]) for row in rows]
+
+
+def normalize_phone(value):
+    raw = str(value or '').strip()
+    digits = re.sub(r'\D', '', raw)
+    if len(digits) == 11 and digits.startswith('8'):
+        digits = '7' + digits[1:]
+    if not 10 <= len(digits) <= 15:
+        return ''
+    return '+' + digits
+
+
+def clean_username(value):
+    return re.sub(r'[^A-Za-z0-9_]', '', str(value or '').lstrip('@'))[:32]
+
+
+def order_payload(conn, order_id):
+    row = conn.execute('SELECT * FROM orders WHERE id=?', (order_id,)).fetchone()
+    if not row:
+        return None
+    result = dict(row)
+    result['items'] = [dict(item) for item in conn.execute(
+        'SELECT id,card_id,product_name,brand,price,quantity,line_total FROM order_items WHERE order_id=? ORDER BY id',
+        (order_id,))]
+    return result
+
+
+def send_telegram_notification(order):
+    token = os.getenv('TELEGRAM_BOT_TOKEN', '')
+    chat_id = os.getenv('DOODA_ORDER_CHAT_ID', '')
+    if not token or not chat_id:
+        return
+    lines = [f"🛒 Новый заказ {order['public_id']}", f"Телефон: {order['phone']}"]
+    if order.get('telegram_username'):
+        lines.append('Telegram: @' + order['telegram_username'])
+    if order.get('customer_name'):
+        lines.append('Клиент: ' + order['customer_name'])
+    lines.append('')
+    for item in order['items']:
+        brand = f" ({item['brand']})" if item['brand'] else ''
+        lines.append(f"• {item['product_name']}{brand} × {item['quantity']} — {item['line_total'] / 100:.2f} ₽")
+    lines.append(f"\nИтого: {order['total'] / 100:.2f} ₽")
+    body = json.dumps({'chat_id': chat_id, 'text': '\n'.join(lines)}).encode()
+    try:
+        request_obj = Request(f'https://api.telegram.org/bot{token}/sendMessage', data=body,
+                              headers={'Content-Type': 'application/json'}, method='POST')
+        with urlopen(request_obj, timeout=6):
+            pass
+    except Exception:
+        app.logger.exception('Не удалось отправить уведомление о заказе в Telegram')
+
+
+def notify_order_async(order):
+    threading.Thread(target=send_telegram_notification, args=(order,), daemon=True).start()
 
 
 @app.after_request
@@ -178,6 +258,75 @@ def me():
     if not user:
         return jsonify(error='Неверные данные Telegram'), 401
     return jsonify(user={key: user.get(key) for key in ['id', 'first_name', 'last_name', 'username']})
+
+
+@app.post('/api/orders')
+def create_order():
+    body = request.get_json(silent=True) or {}
+    client = request.headers.get('CF-Connecting-IP') or request.remote_addr or 'unknown'
+    now_clock = time.monotonic()
+    attempts = [stamp for stamp in ORDER_ATTEMPTS.get(client, []) if now_clock - stamp < 600]
+    if len(attempts) >= 5:
+        return jsonify(error='Слишком много заказов. Повторите через 10 минут.'), 429
+    phone = normalize_phone(body.get('phone'))
+    if not phone:
+        return jsonify(error='Введите корректный номер телефона'), 400
+    raw_items = body.get('items')
+    if not isinstance(raw_items, list) or not raw_items or len(raw_items) > 30:
+        return jsonify(error='Корзина пуста или содержит слишком много позиций'), 400
+    quantities = {}
+    for raw in raw_items:
+        if not isinstance(raw, dict):
+            return jsonify(error='Некорректный состав заказа'), 400
+        card_id = integer(raw.get('id'), minimum=1)
+        quantity = integer(raw.get('quantity'), minimum=1, maximum=99)
+        quantities[card_id] = min(99, quantities.get(card_id, 0) + quantity)
+    tg_user = telegram_user(body.get('initData', ''))
+    username = clean_username(tg_user.get('username') if tg_user else body.get('telegram_username'))
+    telegram_id = str(tg_user.get('id', '')) if tg_user else ''
+    customer_name = ''
+    if tg_user:
+        customer_name = ' '.join(filter(None, [tg_user.get('first_name'), tg_user.get('last_name')]))[:120]
+    now = datetime.now(timezone.utc).isoformat()
+    public_id = 'DS-' + datetime.now(timezone.utc).strftime('%y%m%d') + '-' + secrets.token_hex(3).upper()
+    with db() as conn:
+        conn.execute('BEGIN IMMEDIATE')
+        selected = []
+        total = 0
+        for card_id, quantity in quantities.items():
+            row = conn.execute('SELECT id,name,brand,price,stock_quantity,published FROM cards WHERE id=?',
+                               (card_id,)).fetchone()
+            if not row or not row['published']:
+                return jsonify(error='Один из товаров больше недоступен'), 409
+            if row['stock_quantity'] < quantity:
+                return jsonify(error=f"Недостаточно товара «{row['name']}». Доступно: {row['stock_quantity']}"), 409
+            line_total = row['price'] * quantity
+            total += line_total
+            selected.append((row, quantity, line_total))
+        result = conn.execute('''INSERT INTO orders(public_id,phone,telegram_id,telegram_username,customer_name,
+                                 status,total,created_at,updated_at) VALUES(?,?,?,?,?,'reserved',?,?,?)''',
+                              (public_id, phone, telegram_id, username, customer_name, total, now, now))
+        order_id = result.lastrowid
+        for row, quantity, line_total in selected:
+            conn.execute('''INSERT INTO order_items(order_id,card_id,product_name,brand,price,quantity,line_total)
+                            VALUES(?,?,?,?,?,?,?)''',
+                         (order_id, row['id'], row['name'], row['brand'], row['price'], quantity, line_total))
+            conn.execute('''UPDATE cards SET stock_quantity=stock_quantity-?,
+                            in_stock=CASE WHEN stock_quantity-?>0 THEN 1 ELSE 0 END,updated_at=? WHERE id=?''',
+                         (quantity, quantity, now, row['id']))
+        conn.execute('''INSERT INTO customers(phone,telegram_id,telegram_username,customer_name,first_order_at,last_order_at,
+                        order_count,reserved_total,completed_total) VALUES(?,?,?,?,?,?,1,?,0)
+                        ON CONFLICT(phone) DO UPDATE SET telegram_id=excluded.telegram_id,
+                        telegram_username=CASE WHEN excluded.telegram_username!='' THEN excluded.telegram_username ELSE customers.telegram_username END,
+                        customer_name=CASE WHEN excluded.customer_name!='' THEN excluded.customer_name ELSE customers.customer_name END,
+                        last_order_at=excluded.last_order_at,order_count=customers.order_count+1,
+                        reserved_total=customers.reserved_total+excluded.reserved_total''',
+                     (phone, telegram_id, username, customer_name, now, now, total))
+        order = order_payload(conn, order_id)
+    attempts.append(now_clock)
+    ORDER_ATTEMPTS[client] = attempts
+    notify_order_async(order)
+    return jsonify(order_id=public_id, total=total, status='reserved'), 201
 
 
 @app.get('/media/<name>')
@@ -265,7 +414,11 @@ def stats():
         return jsonify(categories=conn.execute('SELECT COUNT(*) FROM categories').fetchone()[0],
                        cards=conn.execute('SELECT COUNT(*) FROM cards').fetchone()[0],
                        published=conn.execute('SELECT COUNT(*) FROM cards WHERE published=1').fetchone()[0],
-                       out_of_stock=conn.execute('SELECT COUNT(*) FROM cards WHERE in_stock=0').fetchone()[0],
+                       out_of_stock=conn.execute('SELECT COUNT(*) FROM cards WHERE stock_quantity=0').fetchone()[0],
+                       stock_units=conn.execute('SELECT COALESCE(SUM(stock_quantity),0) FROM cards').fetchone()[0],
+                       reserved_orders=conn.execute("SELECT COUNT(*) FROM orders WHERE status='reserved'").fetchone()[0],
+                       completed_orders=conn.execute("SELECT COUNT(*) FROM orders WHERE status='completed'").fetchone()[0],
+                       customers=conn.execute('SELECT COUNT(*) FROM customers').fetchone()[0],
                        images=conn.execute('SELECT COUNT(*) FROM images').fetchone()[0])
 
 
@@ -275,10 +428,64 @@ def export_catalog():
     with db() as conn:
         payload = {'exported_at': datetime.now(timezone.utc).isoformat(),
                    'categories': [dict(row) for row in conn.execute('SELECT * FROM categories ORDER BY sort_order,id')],
-                   'cards': all_cards(False)}
+                   'cards': all_cards(False),
+                   'orders': [order_payload(conn, row['id']) for row in conn.execute('SELECT id FROM orders ORDER BY id')],
+                   'customers': [dict(row) for row in conn.execute('SELECT * FROM customers ORDER BY last_order_at DESC')]}
     body = json.dumps(payload, ensure_ascii=False, indent=2)
     return Response(body, mimetype='application/json', headers={
         'Content-Disposition': f'attachment; filename=dooda-catalog-{datetime.now().date().isoformat()}.json'})
+
+
+@app.get('/api/admin/orders')
+@require_admin
+def admin_orders():
+    status_filter = request.args.get('status', '').strip()
+    with db() as conn:
+        query = 'SELECT id FROM orders'
+        params = ()
+        if status_filter in {'reserved', 'completed', 'cancelled'}:
+            query += ' WHERE status=?'
+            params = (status_filter,)
+        query += " ORDER BY CASE status WHEN 'reserved' THEN 0 WHEN 'completed' THEN 1 ELSE 2 END, id DESC"
+        return jsonify([order_payload(conn, row['id']) for row in conn.execute(query, params)])
+
+
+@app.post('/api/admin/orders/<int:order_id>/status')
+@require_admin
+def update_order_status(order_id):
+    new_status = str((request.get_json(silent=True) or {}).get('status', ''))
+    if new_status not in {'completed', 'cancelled'}:
+        return jsonify(error='Недопустимый статус заказа'), 400
+    now = datetime.now(timezone.utc).isoformat()
+    with db() as conn:
+        conn.execute('BEGIN IMMEDIATE')
+        order = conn.execute('SELECT * FROM orders WHERE id=?', (order_id,)).fetchone()
+        if not order:
+            return jsonify(error='Заказ не найден'), 404
+        if order['status'] != 'reserved':
+            return jsonify(error='Этот заказ уже обработан'), 409
+        if new_status == 'cancelled':
+            for item in conn.execute('SELECT card_id,quantity FROM order_items WHERE order_id=?', (order_id,)):
+                if item['card_id']:
+                    conn.execute('''UPDATE cards SET stock_quantity=stock_quantity+?,in_stock=1,updated_at=?
+                                    WHERE id=?''', (item['quantity'], now, item['card_id']))
+            conn.execute('UPDATE customers SET reserved_total=MAX(0,reserved_total-?) WHERE phone=?',
+                         (order['total'], order['phone']))
+        else:
+            conn.execute('''UPDATE customers SET reserved_total=MAX(0,reserved_total-?),
+                            completed_total=completed_total+? WHERE phone=?''',
+                         (order['total'], order['total'], order['phone']))
+        conn.execute('UPDATE orders SET status=?,updated_at=? WHERE id=?', (new_status, now, order_id))
+        updated = order_payload(conn, order_id)
+    return jsonify(updated)
+
+
+@app.get('/api/admin/customers')
+@require_admin
+def admin_customers():
+    with db() as conn:
+        return jsonify([dict(row) for row in conn.execute(
+            'SELECT * FROM customers ORDER BY last_order_at DESC,id DESC')])
 
 
 @app.get('/api/admin/categories')
@@ -359,24 +566,27 @@ def store_card(card_id):
     if accent not in {'pink', 'blue', 'violet', 'mint', 'orange', 'purple'}:
         accent = 'violet'
     tag = str(body.get('tag', '')).strip()[:24].upper()
+    brand = str(body.get('brand', '')).strip()[:80]
+    stock_quantity = integer(body.get('stock_quantity'), minimum=0, maximum=1_000_000)
     price, old_price = integer(body.get('price')), integer(body.get('old_price'))
     if old_price and old_price <= price:
         old_price = 0
     now = datetime.now(timezone.utc).isoformat()
-    values = (category_id, name, description, icon, accent, tag, price, old_price,
-              1 if body.get('published', True) else 0, 1 if body.get('in_stock', True) else 0,
+    values = (category_id, name, description, brand, icon, accent, tag, price, old_price,
+              1 if body.get('published', True) else 0, 1 if stock_quantity > 0 else 0, stock_quantity,
               1 if body.get('featured', False) else 0)
     with db() as conn:
         if not conn.execute('SELECT 1 FROM categories WHERE id=?', (category_id,)).fetchone():
             return jsonify(error='Категория не найдена'), 400
         if card_id is None:
-            result = conn.execute('''INSERT INTO cards(category_id,name,description,icon,accent,tag,price,old_price,
-                                     published,in_stock,featured,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)''',
+            result = conn.execute('''INSERT INTO cards(category_id,name,description,brand,icon,accent,tag,price,old_price,
+                                     published,in_stock,stock_quantity,featured,created_at,updated_at)
+                                     VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)''',
                                   values + (now, now))
             card_id = result.lastrowid
         else:
-            result = conn.execute('''UPDATE cards SET category_id=?,name=?,description=?,icon=?,accent=?,tag=?,price=?,
-                                     old_price=?,published=?,in_stock=?,featured=?,updated_at=? WHERE id=?''',
+            result = conn.execute('''UPDATE cards SET category_id=?,name=?,description=?,brand=?,icon=?,accent=?,tag=?,price=?,
+                                     old_price=?,published=?,in_stock=?,stock_quantity=?,featured=?,updated_at=? WHERE id=?''',
                                   values + (now, card_id))
             if not result.rowcount:
                 return jsonify(error='Карточка не найдена'), 404
@@ -391,10 +601,12 @@ def duplicate_card(card_id):
         row = conn.execute('SELECT * FROM cards WHERE id=?', (card_id,)).fetchone()
         if not row:
             return jsonify(error='Карточка не найдена'), 404
-        result = conn.execute('''INSERT INTO cards(category_id,name,description,published,in_stock,icon,accent,tag,
-                                 price,old_price,featured,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)''',
-                              (row['category_id'], f"{row['name']} — копия", row['description'], 0, row['in_stock'],
-                               row['icon'], row['accent'], row['tag'], row['price'], row['old_price'], 0, now, now))
+        result = conn.execute('''INSERT INTO cards(category_id,name,description,brand,published,in_stock,stock_quantity,
+                                 icon,accent,tag,price,old_price,featured,created_at,updated_at)
+                                 VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)''',
+                              (row['category_id'], f"{row['name']} — копия", row['description'], row['brand'], 0,
+                               row['in_stock'], row['stock_quantity'], row['icon'], row['accent'], row['tag'],
+                               row['price'], row['old_price'], 0, now, now))
     return jsonify(id=result.lastrowid), 201
 
 

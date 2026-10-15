@@ -6,78 +6,44 @@
   <meta name="theme-color" content="#0b0815">
   <meta name="description" content="DOODA SHOP — атмосферный цифровой каталог">
   <title>DOODA SHOP</title>
-  <link rel="stylesheet" href="/static/style.css">
-  <link rel="stylesheet" href="/static/enhancements.css">
-  <script src="https://telegram.org/js/telegram-web-app.js"></script>
-  <script src="/static/app.js" defer></script>
+  <link rel="stylesheet" href="/static/style.css"><link rel="stylesheet" href="/static/enhancements.css"><link rel="stylesheet" href="/static/commerce.css">
+  <script src="https://telegram.org/js/telegram-web-app.js"></script><script src="/static/app.js" defer></script>
 </head>
 <body>
   <div class="ambient ambient-one"></div><div class="ambient ambient-two"></div>
   <div class="shell">
     <header class="topbar">
-      <button class="brand-button" type="button" data-go="home" aria-label="На главную">
-        <span class="brandmark">D<i>✳</i></span>
-        <span class="brandcopy"><strong>DOODA <em>SHOP</em></strong><small>DIGITAL STORE</small></span>
-      </button>
-      <a class="admin-link" href="/admin" title="Панель администратора">⚙ <span>Админ</span></a>
-      <div class="topright"><span class="live-dot"></span> ONLINE</div>
+      <button class="brand-button" type="button" data-go="home" aria-label="На главную"><span class="brandmark">D<i>✳</i></span><span class="brandcopy"><strong>DOODA <em>SHOP</em></strong><small>DIGITAL STORE</small></span></button>
+      <a class="admin-link" href="/admin" title="Панель администратора">⚙ <span>Админ</span></a><div class="topright"><span class="live-dot"></span> ONLINE</div>
     </header>
     <main>
       <section class="page active" id="page-home">
-        <div class="welcome-line"><span>ПРОСТРАНСТВО DOODA</span><span>✦ VERSION 2.0</span></div>
-        <div class="hero">
-          <span class="pill">✦ DIGITAL EXPERIENCE</span>
-          <h1>Всё начинается<br><span>с атмосферы.</span></h1>
-          <p>Неоновый мир DOODA. Исследуй коллекции, сравнивай идеи и сохраняй то, что нравится.</p>
-          <button class="hero-btn" type="button" data-go="catalog">Смотреть каталог <span>↗</span></button>
-          <div class="hero-symbol">✳</div>
-        </div>
-        <div class="heading-row"><div><span class="eyebrow">FEATURED</span><h2>Выбор DOODA</h2></div><button class="text-button" data-go="catalog">Все <span>↗</span></button></div>
-        <div class="product-grid" id="home-grid"></div>
+        <div class="welcome-line"><span>ПРОСТРАНСТВО DOODA</span><span>✦ VERSION 3.0</span></div>
+        <div class="hero"><span class="pill">✦ DIGITAL EXPERIENCE</span><h1>Всё начинается<br><span>с атмосферы.</span></h1><p>Выбирай товары любимых марок, добавляй в корзину и оформляй заказ за минуту.</p><button class="hero-btn" type="button" data-go="catalog">Смотреть каталог <span>↗</span></button><div class="hero-symbol">✳</div></div>
+        <div class="heading-row"><div><span class="eyebrow">FEATURED</span><h2>Выбор DOODA</h2></div><button class="text-button" data-go="catalog">Все <span>↗</span></button></div><div class="product-grid" id="home-grid"></div>
       </section>
       <section class="page" id="page-catalog">
         <span class="eyebrow">EXPLORE</span><h1 class="page-title">Каталог<span>.</span></h1>
-        <label class="search-box"><span>⌕</span><input id="search" type="search" placeholder="Найти по названию, описанию или метке…" autocomplete="off"></label>
-        <div class="catalog-tools">
-          <div class="chips" id="chips"></div>
-          <select id="sort" class="sort" aria-label="Сортировка">
-            <option value="featured">Сначала избранное</option><option value="new">Сначала новые</option>
-            <option value="price-asc">Цена: по возрастанию</option><option value="price-desc">Цена: по убыванию</option>
-          </select>
-          <label class="stock-filter"><input id="stock-only" type="checkbox"> Только в наличии</label>
-        </div>
-        <div class="result-line" id="result-count" aria-live="polite"></div>
-        <div class="product-grid" id="catalog-grid"></div>
-        <div class="empty" id="catalog-empty" hidden><div>⌕</div><strong>Ничего не найдено</strong><p>Попробуй изменить фильтр или запрос.</p></div>
+        <label class="search-box"><span>⌕</span><input id="search" type="search" placeholder="Найти товар или марку…" autocomplete="off"></label>
+        <div class="catalog-tools"><span class="filter-label">1. Выберите тип</span><div class="chips" id="chips"></div><span class="filter-label">2. Уточните марку</span><select id="brand-filter" class="sort"><option value="all">Все марки</option></select><select id="sort" class="sort" aria-label="Сортировка"><option value="featured">Сначала рекомендуемые</option><option value="new">Сначала новые</option><option value="price-asc">Цена: по возрастанию</option><option value="price-desc">Цена: по убыванию</option></select><label class="stock-filter"><input id="stock-only" type="checkbox"> Только в наличии</label></div>
+        <div class="result-line" id="result-count" aria-live="polite"></div><div class="product-grid" id="catalog-grid"></div><div class="empty" id="catalog-empty" hidden><div>⌕</div><strong>Ничего не найдено</strong><p>Попробуй изменить тип, марку или запрос.</p></div>
       </section>
-      <section class="page" id="page-favorites">
-        <span class="eyebrow">YOUR SPACE</span><h1 class="page-title">Избранное<span>.</span></h1>
-        <p class="section-subtitle">Только то, что тебе понравилось.</p>
-        <div class="product-grid" id="favorites-grid"></div>
-        <div class="empty" id="favorites-empty" hidden><div>♡</div><strong>Пока ничего нет</strong><p>Нажми на сердечко в каталоге, чтобы сохранить карточку.</p><button data-go="catalog">Открыть каталог ↗</button></div>
+      <section class="page" id="page-cart">
+        <span class="eyebrow">YOUR ORDER</span><h1 class="page-title">Корзина<span>.</span></h1><div id="cart-list" class="cart-list"></div>
+        <div class="empty" id="cart-empty" hidden><div>⌑</div><strong>Корзина пуста</strong><p>Добавь товары из каталога.</p><button data-go="catalog">Открыть каталог ↗</button></div>
+        <div class="cart-summary" id="cart-summary"><div><span>Итого</span><strong id="cart-total">0 ₽</strong></div><button id="go-checkout" type="button">Перейти к оформлению →</button></div>
       </section>
+      <section class="page" id="page-checkout">
+        <button class="back-button" type="button" data-go="cart">← Назад в корзину</button><span class="eyebrow">CHECKOUT</span><h1 class="page-title">Оформление<span>.</span></h1>
+        <div class="checkout-card"><h2>Ваш заказ</h2><div id="checkout-items"></div><div class="checkout-total"><span>Конечная стоимость</span><strong id="checkout-total">0 ₽</strong></div></div>
+        <form id="checkout-form" class="checkout-card"><h2>Контактные данные</h2><label>Номер телефона<input id="order-phone" type="tel" autocomplete="tel" placeholder="+7 999 123-45-67" required></label><label>Telegram username <small>(если заказ не из Mini App)</small><input id="order-username" type="text" maxlength="32" placeholder="@username"></label><label class="consent"><input id="order-consent" type="checkbox" required><span>Согласен на обработку номера телефона для связи по этому заказу.</span></label><button id="place-order" type="submit">Оформить заказ</button><p class="form-error" id="order-error" role="alert"></p></form>
+      </section>
+      <section class="page" id="page-success"><div class="success-card"><div class="success-icon">✓</div><span class="eyebrow">ORDER ACCEPTED</span><h1>Ваш заказ оформлен</h1><p>Ожидайте ответа менеджера. Товары уже зарезервированы.</p><div class="order-number">Номер заказа: <strong id="success-order-id"></strong></div><button type="button" data-go="home">Вернуться на главную</button></div></section>
       <section class="page" id="page-profile">
-        <span class="eyebrow">ACCOUNT</span><h1 class="page-title">Профиль<span>.</span></h1>
-        <div class="profile-card"><div class="profile-avatar" id="avatar">D</div><div><div class="profile-name" id="profile-name">Гость DOODA</div><div class="profile-hint" id="profile-hint">Каталог доступен без регистрации</div></div><div class="profile-spark">✳</div></div>
-        <div class="profile-note" id="profile-note">В Telegram профиль подтверждается автоматически. Избранное хранится только на этом устройстве.</div>
-        <div class="stat-grid"><div><span id="saved-count">0</span><small>В избранном</small></div><div><span id="catalog-count">0</span><small>В каталоге</small></div></div>
-        <div class="info-card"><b>Управление магазином</b><p>Добавляй товары, цены, фотографии и категории через защищённую панель.</p><a class="admin-cta" href="/admin">Открыть админ-панель →</a></div>
-        <div class="info-card"><b>О проекте</b><p>DOODA SHOP — демонстрационный каталог. Подключение оплаты и оформления заказов выполняется отдельно.</p></div>
+        <span class="eyebrow">ACCOUNT</span><h1 class="page-title">Профиль<span>.</span></h1><div class="profile-card"><div class="profile-avatar" id="avatar">D</div><div><div class="profile-name" id="profile-name">Гость DOODA</div><div class="profile-hint" id="profile-hint">Заказ доступен без регистрации</div></div><div class="profile-spark">✳</div></div><div class="profile-note" id="profile-note">В Telegram профиль подтверждается автоматически. Для связи по заказу нужен номер телефона.</div><div class="stat-grid"><div><span id="cart-count-profile">0</span><small>В корзине</small></div><div><span id="catalog-count">0</span><small>В каталоге</small></div></div><div class="info-card"><b>Управление магазином</b><p>Заказы, остатки и клиентская база доступны в защищённой панели.</p><a class="admin-cta" href="/admin">Открыть админ-панель →</a></div>
       </section>
     </main>
-    <nav class="tabbar" aria-label="Навигация">
-      <button class="tab active" data-go="home"><span class="tab-icon">⌂</span><span>Главная</span></button>
-      <button class="tab" data-go="catalog"><span class="tab-icon">▦</span><span>Каталог</span></button>
-      <button class="tab" data-go="favorites"><span class="tab-icon">♡</span><span>Избранное</span></button>
-      <button class="tab" data-go="profile"><span class="tab-icon">◯</span><span>Профиль</span></button>
-    </nav>
+    <nav class="tabbar" aria-label="Навигация"><button class="tab active" data-go="home"><span class="tab-icon">⌂</span><span>Главная</span></button><button class="tab" data-go="catalog"><span class="tab-icon">▦</span><span>Каталог</span></button><button class="tab" data-go="cart"><span class="tab-icon cart-icon">⌑<b id="cart-badge" hidden>0</b></span><span>Корзина</span></button><button class="tab" data-go="profile"><span class="tab-icon">◯</span><span>Профиль</span></button></nav>
   </div>
-  <dialog id="details">
-    <button class="modal-close" id="close-details" aria-label="Закрыть">✕</button>
-    <div class="detail-gallery" id="detail-gallery"></div>
-    <div class="detail-symbol" id="detail-symbol"></div><span class="eyebrow" id="detail-category">DOODA</span>
-    <h2 id="detail-name"></h2><div class="detail-price" id="detail-price"></div><p id="detail-description"></p>
-    <div class="detail-buttons"><button class="detail-action" id="detail-favorite">♡ В избранное</button><button class="detail-share" id="detail-share">Поделиться</button></div>
-  </dialog>
-</body>
-</html>
+  <dialog id="details"><button class="modal-close" id="close-details" aria-label="Закрыть">✕</button><div class="detail-gallery" id="detail-gallery"></div><div class="detail-symbol" id="detail-symbol"></div><span class="eyebrow" id="detail-category">DOODA</span><h2 id="detail-name"></h2><div class="detail-price" id="detail-price"></div><p id="detail-description"></p><p class="detail-stock" id="detail-stock"></p><button class="detail-action" id="detail-cart">Добавить в корзину</button></dialog>
+</body></html>
